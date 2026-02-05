@@ -1,0 +1,62 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ===== Virtual environments =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== Secrets =====
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# ===== OS files =====
+.DS_Store
+Thumbs.db
+
+# ===== VS Code =====
+.vscode/
+!.vscode/extensions.json
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== Logs & temp =====
+*.log
+logs/
+tmp/
+temp/
+
+# ===== Build / cache =====
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+.htmlcov/
+.tox/
+
+# ===== Data (choose one strategy) =====
+# If you do NOT want to upload datasets, uncomment the next lines:
+# data/
+# !data/README.md
+# !data/sample_*.csv
+
+# If you DO want to upload small demo data, keep data/ tracked and ignore only big formats:
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.db
+*.sqlite
+*.zip
+*.tar
+*.gz

@@ -1,0 +1,7 @@
+{
+    // 强制指定解释器路径为当前项目下的 venv
+    "python.defaultInterpreterPath": "./venv/Scripts/python.exe",
+    
+    // 告诉 VS Code 打开终端时自动激活环境
+    "python.terminal.activateEnvironment": true
+}
