@@ -4,5 +4,3 @@ numpy
 plotly
 scikit-learn
 matplotlib
-transformers
-torch --index-url https://download.pytorch.org/whl/cpu
