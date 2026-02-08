@@ -8,87 +8,215 @@ import os
 from sklearn.linear_model import LinearRegression
 
 # ==========================================
-# 1. Config & Data Loading
+# 1. Configuration (Best Practice: Separation of Concerns)
 # ==========================================
+class Config:
+    """Central configuration for easy tuning and maintenance."""
+    # Data Paths
+    DATA_PATH = 'data/processed_data.csv'
+    
+    # Risk Calculation Weights
+    HYPE_WEIGHT = 0.6
+    MOAT_WEIGHT = 0.4
+    
+    # Visual Thresholds
+    HIGH_RISK_THRESHOLD = 55
+    LOW_RISK_THRESHOLD = 45
+    
+    # Plotting Ranges (Wider lens to capture outliers)
+    AXIS_RANGE = [0, 100]
+    
+    # Trend Analysis
+    TREND_UP_THRESHOLD = 5
+    TREND_DOWN_THRESHOLD = -5
+    
+    # Key Market Events (Contextual Markers)
+    EVENTS = {
+        '2024-12-10': 'Gemini 2.0 Flash',
+        '2025-01-15': 'DeepSeek R1 Launch'
+    }
+
 st.set_page_config(page_title="AI Startup Bubble Detector", layout="wide")
 
+# Custom CSS for polished look
 st.markdown("""
 <style>
     .stDataFrame {font-size: 1.1rem;}
     div[data-testid="stMetricValue"] {font-size: 1.8rem;}
+    .reportview-container .main .block-container {max-width: 1200px; padding-top: 2rem;}
 </style>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# 2. Data Validation & Processing (Data Quality)
+# ==========================================
+def validate_dataframe(df):
+    """
+    Sanity checks to ensure data integrity before rendering.
+    Demonstrates 'Defensive Programming'.
+    """
+    required_cols = {'company', 'date', 'hype_score', 'moat_score'}
+    missing = required_cols - set(df.columns)
+    
+    if missing:
+        raise ValueError(f"CRITICAL: Missing columns in dataset: {missing}")
+    
+    # Check for probability bounds (0-1)
+    if not df['hype_score'].between(0, 1).all():
+        st.warning("⚠️ Data Quality Alert: Some hype_scores are outside [0, 1] range.")
+        
+    # Check for date gaps (Time-series integrity)
+    date_gaps = df.groupby('company')['date'].apply(
+        lambda x: (pd.to_datetime(x.max()) - pd.to_datetime(x.min())).days - len(x) + 1
+    )
+    if date_gaps.max() > 7:
+        st.toast(f"⚠️ Notice: Data gaps detected for {date_gaps[date_gaps > 7].count()} companies.", icon="ℹ️")
+
 @st.cache_data(ttl=3600)
 def load_and_process_data():
-    file_path = 'data/processed_data.csv'
-    
-    if os.path.exists(file_path):
-        df = pd.read_csv(file_path)
-    else:
+    """ETL Pipeline: Load, Validate, Transform."""
+    try:
+        if not os.path.exists(Config.DATA_PATH):
+            st.error(f"❌ File not found: {Config.DATA_PATH}")
+            return None
+            
+        df = pd.read_csv(Config.DATA_PATH)
+        
+        # 1. Validation
+        validate_dataframe(df)
+        
+        # 2. Transformation
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        df['hype_display'] = df['hype_score'] * 100
+        df['moat_display'] = df['moat_score'] * 100
+        
+        # 3. Risk Calculation
+        df['risk_score'] = (
+            (df['hype_display'] * Config.HYPE_WEIGHT) + 
+            ((100 - df['moat_display']) * Config.MOAT_WEIGHT)
+        )
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Critical Error loading data: {str(e)}")
         return None
-
-    df['date'] = pd.to_datetime(df['date']).dt.date
-    # Convert raw probability to percentage (0-100)
-    df['hype_display'] = df['hype_score'] * 100
-    df['moat_display'] = df['moat_score'] * 100
-    
-    # Risk Score Formula
-    df['risk_score'] = (df['hype_display'] * 0.6) + ((100 - df['moat_display']) * 0.4)
-    
-    return df
 
 df_raw = load_and_process_data()
 
 if df_raw is None:
-    st.error("❌ Data not found. Please run nlp_engine.py first.")
     st.stop()
 
 # ==========================================
-# 2. Global Benchmark Calculation (The Fix)
+# 3. Global Benchmarking (Performance Optimization)
 # ==========================================
-# 🔥 CRITICAL FIX: Calculate "Global" averages before applying any filters.
-# This ensures the benchmark lines (dashed) remain static regardless of user filtering.
-df_global_daily = df_raw.groupby(['company', 'date'])[['hype_display', 'moat_display']].mean().reset_index()
-df_global_latest = df_global_daily.sort_values('date').groupby('company').tail(1)
+@st.cache_data(ttl=3600)
+def compute_global_benchmarks(df):
+    """
+    Compute global medians ONCE and cache them. 
+    Prevents re-calculation on every interaction.
+    """
+    df_daily = df.groupby(['company', 'date'])[['hype_display', 'moat_display']].mean().reset_index()
+    latest = df_daily.sort_values('date').groupby('company').tail(1)
+    
+    return {
+        'hype_median': latest['hype_display'].median(),
+        'moat_median': latest['moat_display'].median()
+    }
 
-GLOBAL_HYPE_MEDIAN = df_global_latest['hype_display'].median()
-GLOBAL_MOAT_MEDIAN = df_global_latest['moat_display'].median()
+benchmarks = compute_global_benchmarks(df_raw)
 
 # ==========================================
-# 3. Sidebar Controls (Filtering)
+# 4. Advanced Analytics (ML Capability)
+# ==========================================
+def predict_risk_weighted(company_data):
+    """
+    Weighted Linear Regression with Confidence Intervals.
+    Gives more weight to recent data points.
+    """
+    if len(company_data) < 7:
+        return np.nan, np.nan
+        
+    recent = company_data.tail(30).copy() # Use last 30 days
+    X = np.arange(len(recent)).reshape(-1, 1)
+    y = recent['risk_score'].values
+    
+    # Exponential weights: Recent days matter more
+    weights = np.exp(np.linspace(0, 1, len(recent)))
+    
+    try:
+        model = LinearRegression().fit(X, y, sample_weight=weights)
+        next_day_idx = len(recent) + 7
+        pred = model.predict([[next_day_idx]])[0]
+        
+        # Simple Confidence Interval (Std Dev of residuals)
+        residuals = y - model.predict(X)
+        std_dev = np.std(residuals)
+        margin_of_error = 1.96 * std_dev # 95% CI
+        
+        pred_clipped = max(0, min(100, pred))
+        return pred_clipped, margin_of_error
+    except:
+        return np.nan, np.nan
+
+def get_trend_arrow_formatted(val):
+    """Formatter for trend indicators."""
+    if pd.isna(val): return '⚪ N/A'
+    
+    if val > Config.TREND_UP_THRESHOLD:
+        emoji = '🔴' # Risk increasing
+        direction = '↑'
+    elif val < Config.TREND_DOWN_THRESHOLD:
+        emoji = '🟢' # Risk decreasing
+        direction = '↓'
+    else:
+        emoji = '⚪'
+        direction = '≈'
+        
+    return f"{emoji} {direction} {abs(val):.1f}%"
+
+# ==========================================
+# 5. Sidebar & Filtering
 # ==========================================
 st.sidebar.header("🕹️ Control Panel")
 
 all_companies = sorted(df_raw['company'].unique())
 selected_companies = st.sidebar.multiselect(
-    "Select Competitors",
+    "Select Entities",
     options=all_companies,
     default=all_companies 
 )
 
 st.sidebar.markdown("---")
 risk_filter = st.sidebar.slider(
-    "🎚️ Filter by Risk Score",
-    min_value=0, 
-    max_value=100, 
-    value=(0, 100),
-    help="Filter entities, but keep the global benchmark lines fixed."
+    "🎚️ Risk Filter",
+    min_value=0, max_value=100, value=(0, 100),
+    help="Filter entities by Risk Score. Global benchmarks remain fixed."
 )
 
-# Apply filters
+# Sidebar Stats (Data Coverage)
+st.sidebar.markdown("### 📊 Data Stats")
+st.sidebar.info(
+    f"""
+    - **Entities:** {len(all_companies)}
+    - **Records:** {len(df_raw):,}
+    - **Window:** {df_raw['date'].min()} to {df_raw['date'].max()}
+    """
+)
+
+# Applying Filters
 df_filtered = df_raw[
     (df_raw['company'].isin(selected_companies)) &
     (df_raw['risk_score'] >= risk_filter[0]) &
     (df_raw['risk_score'] <= risk_filter[1])
 ]
 
-if len(df_filtered) == 0:
-    st.warning("⚠️ No companies match your filters. Try adjusting the risk range.")
+if df_filtered.empty:
+    st.warning("⚠️ No data matches your filter criteria.")
     st.stop()
 
 # ==========================================
-# 4. Data Aggregation (Filtered)
+# 6. Aggregation & Feature Engineering
 # ==========================================
 df_daily = (
     df_filtered
@@ -97,79 +225,69 @@ df_daily = (
     .mean()
     .reset_index()
 )
-
-# Trend calculations
 df_daily.sort_values(['company', 'date'], inplace=True)
+
+# Calculate 7-Day Change
 df_daily['risk_change_pct'] = df_daily.groupby('company')['risk_score'].pct_change(periods=7) * 100
 
-# Prediction Logic
-def predict_next_7d(company_data):
-    if len(company_data) < 7: return np.nan
-    recent_data = company_data.tail(30)
-    X = np.arange(len(recent_data)).reshape(-1, 1)
-    y = recent_data['risk_score'].values
-    try:
-        model = LinearRegression().fit(X, y)
-        next_7d = model.predict([[len(recent_data) + 7]])[0]
-        return max(0, min(100, next_7d))
-    except:
-        return np.nan
+# Get Latest Snapshot
+df_latest = df_daily.groupby('company').tail(1).sort_values('risk_score', ascending=False).copy()
 
-def get_trend_arrow(val):
-    if pd.isna(val): return '⚪ -'
-    if val > 5: return f'🔴 ↑{val:.1f}%'
-    if val < -5: return f'🟢 ↓{val:.1f}%'
-    return f'⚪ ≈{val:.1f}%'
+# Apply Advanced Analytics
+df_latest['Trend_Display'] = df_latest['risk_change_pct'].apply(get_trend_arrow_formatted)
 
-df_latest = (
-    df_daily
-    .groupby('company')
-    .tail(1)
-    .sort_values('risk_score', ascending=False)
+# Prediction with Unpacking
+preds = df_latest.apply(
+    lambda row: predict_risk_weighted(df_daily[df_daily['company'] == row['company']]), 
+    axis=1
 )
+df_latest['Pred_Value'] = [p[0] for p in preds]
+df_latest['Pred_Error'] = [p[1] for p in preds]
 
-df_latest['Trend (7d)'] = df_latest['risk_change_pct'].apply(get_trend_arrow)
-df_latest['Predicted (7d)'] = df_latest.apply(
-    lambda row: predict_next_7d(df_daily[df_daily['company'] == row['company']]), axis=1
+# Format Prediction String (e.g., "45.2 (±2.1)")
+df_latest['Forecast (7d)'] = df_latest.apply(
+    lambda x: f"{x['Pred_Value']:.1f} (±{x['Pred_Error']:.1f})" if pd.notnull(x['Pred_Value']) else "N/A",
+    axis=1
 )
 
 # ==========================================
-# 5. Dashboard UI
+# 7. Dashboard Layout
 # ==========================================
 st.title("🫧 AI Startup Bubble Detector")
 st.markdown("Quantifying the gap between **Market Hype** and **Technical Moat**.")
 
-latest_date = df_daily['date'].max()
-st.caption(f"📅 Data updated: **{latest_date}** | Global Benchmark based on {len(all_companies)} entities")
+st.caption(f"📅 Last Updated: **{df_daily['date'].max()}**")
 
-# --- Row 1: Leaderboard ---
-st.subheader("🚨 Bubble Risk Leaderboard")
+# --- Section A: Leaderboard ---
+st.subheader("🚨 Risk Leaderboard")
 
-def highlight_risk(val):
-    if val > 55: return 'background-color: rgba(255, 0, 0, 0.2)'
-    elif val < 45: return 'background-color: rgba(0, 255, 0, 0.2)'
+def style_risk(val):
+    """Conditional formatting for the dataframe."""
+    if val > Config.HIGH_RISK_THRESHOLD:
+        return 'background-color: rgba(255, 0, 0, 0.15); color: #8B0000'
+    elif val < Config.LOW_RISK_THRESHOLD:
+        return 'background-color: rgba(0, 255, 0, 0.15); color: #006400'
     return ''
 
-display_cols = df_latest[['company', 'risk_score', 'Trend (7d)', 'Predicted (7d)', 'hype_display', 'moat_display']]
-display_cols.columns = ['Company', 'Risk Score', '7-Day Trend', 'Forecast (7d)', 'Hype Prob (%)', 'Moat Prob (%)']
+display_cols = df_latest[['company', 'risk_score', 'Trend_Display', 'Forecast (7d)', 'hype_display', 'moat_display']]
+display_cols.columns = ['Company', 'Risk Score', '7-Day Trend', 'Forecast (7d)', 'Hype (%)', 'Moat (%)']
 
 st.dataframe(
-    display_cols.set_index('Company').style.map(highlight_risk, subset=['Risk Score']),
+    display_cols.set_index('Company').style.map(style_risk, subset=['Risk Score']).format("{:.1f}", subset=['Risk Score', 'Hype (%)', 'Moat (%)']),
     use_container_width=True
 )
 
 # CSV Download
-csv = display_cols.to_csv(index=False).encode('utf-8')
 st.download_button(
-    label="📥 Download Risk Report (CSV)",
-    data=csv,
-    file_name=f'bubble_risk_report_{latest_date}.csv',
-    mime='text/csv',
+    "📥 Download Report",
+    display_cols.to_csv().encode('utf-8'),
+    "bubble_risk_report.csv",
+    "text/csv"
 )
 
 st.divider()
 
-# --- Row 2: Quadrant Chart (Fixed) ---
+# --- Section B: Quadrant Analysis ---
 col1, col2 = st.columns([3, 1])
 
 with col1:
@@ -186,42 +304,45 @@ with col1:
         labels={'moat_display': 'Tech Moat Probability (%)', 'hype_display': 'Market Hype Probability (%)'},
     )
     
-    # 🔥 CRITICAL FIX: Hardcode the benchmark lines using Global Medians
-    fig_quad.add_hline(
-        y=GLOBAL_HYPE_MEDIAN, line_dash="dash", line_color="red", opacity=0.5,
-        annotation_text=f"Global Median Hype ({GLOBAL_HYPE_MEDIAN:.1f}%)", annotation_position="top left"
+    # Enhanced Interactivity (Tooltip)
+    fig_quad.update_traces(
+        hovertemplate="<b>%{text}</b><br>" +
+                      "Moat: %{x:.1f}%<br>" +
+                      "Hype: %{y:.1f}%<br>" +
+                      "Risk: %{marker.size:.1f}<br>" +
+                      "<extra></extra>"
     )
     
-    fig_quad.add_vline(
-        x=GLOBAL_MOAT_MEDIAN, line_dash="dash", line_color="green", opacity=0.5,
-        annotation_text=f"Global Median Moat ({GLOBAL_MOAT_MEDIAN:.1f}%)", annotation_position="top left"
-    )
+    # Fixed Benchmarks
+    fig_quad.add_hline(y=benchmarks['hype_median'], line_dash="dash", line_color="red", opacity=0.5, annotation_text=f"Global Hype ({benchmarks['hype_median']:.1f}%)")
+    fig_quad.add_vline(x=benchmarks['moat_median'], line_dash="dash", line_color="green", opacity=0.5, annotation_text=f"Global Moat ({benchmarks['moat_median']:.1f}%)")
     
-    # 🔥 CRITICAL FIX: Lock the axis ranges to [10, 70]
-    # This ensures entities (like DeepSeek) stay in the exact same position, preventing visual jumping when others are filtered out.
+    # Polished Layout
     fig_quad.update_layout(
-        xaxis_range=[10, 70], 
-        yaxis_range=[10, 70],
-        showlegend=True
+        xaxis_range=Config.AXIS_RANGE,
+        yaxis_range=Config.AXIS_RANGE,
+        template="plotly_white", # Clean white background
+        showlegend=True,
+        height=500
     )
-    
     st.plotly_chart(fig_quad, use_container_width=True)
 
 with col2:
-    st.info(f"""
-    **Global Benchmarks:**
-    
-    - **Hype Median:** {GLOBAL_HYPE_MEDIAN:.1f}%
-    - **Moat Median:** {GLOBAL_MOAT_MEDIAN:.1f}%
-    
-    *Benchmarks are calculated from the full dataset and remain fixed when filtering.*
-    """)
+    # Methodology Expander
+    with st.expander("🔍 Methodology", expanded=True):
+        st.markdown(f"""
+        **Risk Score Formula:**
+        $$Risk = {Config.HYPE_WEIGHT}\\times Hype + {Config.MOAT_WEIGHT}\\times(100-Moat)$$
+        
+        **Definitions:**
+        - **Hype:** Marketing buzz & speculation.
+        - **Moat:** Technical depth & reproducibility.
+        - **Benchmarks:** Median of all {len(all_companies)} entities.
+        """)
+        st.info("Use the sidebar filter to focus on specific risk profiles.")
 
-# --- Row 3: Historical Trend ---
+# --- Section C: Historical Trend ---
 st.subheader("📈 Historical Trend")
-
-# Unify Y-axis range for consistent comparison
-risk_min, risk_max = 20, 80 
 
 fig_trend = px.line(
     df_daily,
@@ -229,17 +350,25 @@ fig_trend = px.line(
     y='risk_score',
     color='company',
     markers=True,
-    title="Bubble Risk Score Over Time"
+    title="Risk Score Evolution"
 )
 
-fig_trend.update_yaxes(range=[risk_min, risk_max])
-fig_trend.update_traces(connectgaps=True)
-
-# Add Events
-events = {'2024-12-10': 'Gemini 2.0', '2025-01-15': 'DeepSeek R1'}
-for date_str, event_name in events.items():
+# Add Event Markers
+for date_str, event_name in Config.EVENTS.items():
     try:
-        fig_trend.add_vline(x=date_str, line_dash="dot", annotation_text=event_name, line_color="gray")
+        fig_trend.add_vline(
+            x=date_str, 
+            line_dash="dot", 
+            line_color="gray", 
+            annotation_text=event_name,
+            annotation_position="top left"
+        )
     except: pass
+
+fig_trend.update_layout(
+    yaxis_range=[20, 80], # Focused view
+    template="plotly_white",
+    hovermode="x unified"
+)
 
 st.plotly_chart(fig_trend, use_container_width=True)
