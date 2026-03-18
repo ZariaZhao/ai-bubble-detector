@@ -1,19 +1,3 @@
-## 📅 Project Roadmap & Status
-
-### Phase 1: MVP & Architecture Verification (✅ Completed)
-- [x] Designed the "Bubble Index" quantification framework (Hype vs. Utility).
-- [x] Built the interactive dashboard using **Streamlit** to validate visualization logic.
-- [x] Established the data schema and integrated with **Power BI** for business reporting.
-- [x] **Outcome:** Validated the mathematical feasibility of the quadrant model using simulated Gaussian distribution data.
-
-### Phase 2: Data Pipeline Engineering (🚧 In Progress)
-- [ ] Implement ETL pipeline to scrape unstructured discussions from **Hacker News (Algolia API)**.
-- [ ] Develop NLP preprocessing module (Tokenization, Noise Removal).
-- [ ] Store raw and processed data into **SQLite/CSV** for auditability.
-
-### Phase 3: NLP Core & Inference (Next Step)
-- [ ] Deploy Zero-Shot Classification model (BART-Large-MNLI) to score "Moat" vs. "Hype".
-
 # AI Bubble Detector
 *NLP-Driven Market Hype & Narrative Analysis*
 
